@@ -1,0 +1,134 @@
+version: '3.7'
+services:
+  # haproxy:
+  #   image: haproxy:lts-alpine
+  #   hostname: haproxy
+  #   container_name: haproxy
+  #   volumes: 
+  #     - $PWD/haproxy/:/usr/local/etc/haproxy/:ro
+  #   networks:
+  #     - metanet-private
+  #     - metanet-public
+  #   ports:
+  #     - 8080:80
+  nginx:
+    image: nginx:1.25.3-alpine
+    hostname: nginx
+    container_name: nginx
+    volumes: 
+      - $PWD/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - $PWD/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - metanet-private
+      - metanet-public
+    ports:
+      - 8080:80
+    cpus: 1
+    mem_limit: 128m
+  metabase_ha1:
+    image: metabase/metabase-enterprise:v1.48.3
+    hostname: metabase_ha1
+    container_name: metabase_ha1
+    environment:
+      MB_DB_DBNAME: metabase
+      MB_DB_USER: metabase
+      MB_DB_PASS: mysecretpassword
+      MB_DB_PORT: 5432
+      MB_DB_HOST: postgres_shared
+      MB_DB_TYPE: postgres
+      JAVA_TOOL_OPTIONS: -Xmx1488m -Xms500m
+    networks:
+      - metanet-private
+      - metanet-db
+    depends_on:
+      - postgres_shared
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1024M
+        reservations:
+          cpus: '1'
+          memory: 1024M
+    healthcheck:
+      test: curl --fail -X GET -I http://localhost:3000/api/health || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 10
+  metabase_ha2:
+    image: metabase/metabase-enterprise:v1.48.3
+    hostname: metabase_ha2
+    container_name: metabase_ha2
+    environment:
+      MB_DB_DBNAME: metabase
+      MB_DB_USER: metabase
+      MB_DB_PASS: mysecretpassword
+      MB_DB_PORT: 5432
+      MB_DB_HOST: postgres_shared
+      MB_DB_TYPE: postgres
+      JAVA_TOOL_OPTIONS: -Xmx1488m -Xms500m
+      # MB_DB_AUTOMIGRATE: false
+    networks:
+      - metanet-private
+      - metanet-db
+    depends_on:
+      - postgres_shared
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1024M
+        reservations:
+          cpus: '1'
+          memory: 1024M
+    healthcheck:
+      test: curl --fail -X GET -I http://localhost:3000/api/health || exit 1
+      interval: 15s
+      timeout: 5s
+      retries: 10
+  setup-postgres:
+    build: setup/.
+    container_name: setup-postgres
+    volumes:
+      - $PWD/setup/setup.py:/app/setup.py
+    networks:
+      - metanet-private
+    depends_on:
+      metabase_ha1:
+        condition: service_healthy
+    command: python /app/setup.py
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 64M
+        reservations:
+          cpus: '0.5'
+          memory: 32M
+    environment:
+      host: http://metabase_ha1
+      port: 3000
+      dbs: 1
+  postgres_shared:
+    image: postgres:16.1-alpine
+    container_name: postgres_shared
+    hostname: postgres_shared
+    environment:
+      - "POSTGRES_USER=metabase"
+      - "POSTGRES_DB=metabase"
+      - "POSTGRES_PASSWORD=mysecretpassword"
+    volumes:
+      - $PWD/postgres_shared:/var/lib/postgresql/data
+    ports:
+      - 5433:5432
+    networks:
+      - metanet-db
+    cpus: 1
+    mem_limit: 128m
+networks: 
+  metanet-private:
+    driver: bridge
+  metanet-public:
+    driver: bridge
+  metanet-db:
+    driver: bridge
